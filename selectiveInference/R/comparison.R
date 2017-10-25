@@ -797,9 +797,10 @@ tr=beta!=0
 type="full"
 # type="partial"
 
-nsim = 50
+nsim = 10
 nzb=0
 pvals <- matrix(NA, nrow=nsim, ncol=p)
+pvs_old = c()
 pvs <- c()
 # x = matrix(rnorm(n*p),n,p)
 # x = scale(x,T,T)/sqrt(n-1)
@@ -826,6 +827,7 @@ for (i in 1:nsim) {
   pvals[i, aa$vars] <- aa$pv
   bb = oldFixedLassoInf(x,y,bhat,lambda,intercept=F,sigma=sigma,type=type)
   pvs <- c(pvs,bb$pv,recursive=T)
+  pvs_old <- c(pvs_old, aa$pv, recursive=TRUE)
   cat()
 }
 

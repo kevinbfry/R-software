@@ -2,18 +2,21 @@
 # for the solution of
 # min 1/2 || y - \beta_0 - X \beta ||_2^2 + \lambda || \beta ||_1
 
-fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","cox"),intercept=TRUE, status=NULL,
+fixedLassoInf <- function(x, y, beta, 
+                          lambda, family=c("gaussian","binomial","cox"),
+                          intercept=TRUE, add.targets=NULL, status=NULL,
                           sigma=NULL, alpha=0.1,
                           type=c("partial","full"), tol.beta=1e-5, tol.kkt=0.1,
-                          gridrange=c(-100,100), bits=NULL, verbose=FALSE) {
-  
+                          gridrange=c(-100,100), bits=NULL, verbose=FALSE, 
+                          linesearch.try=10) {
+
   family = match.arg(family)
   this.call = match.call()
   type = match.arg(type)
   
   if(family=="binomial")  {
-    # if(type!="partial") stop("Only type= partial allowed with binomial family")
-    out=fixedLogitLassoInf(x,y,beta,lambda,alpha=alpha, type=type, tol.beta=tol.beta, tol.kkt=tol.kkt,
+    if(type!="partial") stop("Only type= partial allowed with binomial family")
+    out=fixedLogitLassoInf(x,y,beta,lambda,alpha=alpha, type="partial", tol.beta=tol.beta, tol.kkt=tol.kkt,
                            gridrange=gridrange, bits=bits, verbose=verbose,this.call=this.call)
     return(out)
   }
@@ -26,17 +29,97 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
   
   else{
     
-    
-    
     checkargs.xy(x,y)
     if (missing(beta) || is.null(beta)) stop("Must supply the solution beta")
     if (missing(lambda) || is.null(lambda)) stop("Must supply the tuning parameter value lambda")
+    
+    n = nrow(x)
+    p = ncol(x)
+    beta = as.numeric(beta)
+    if (type == "full") {
+      if (p > n) {
+        # need intercept (if there is one) for debiased lasso
+        hbeta = beta
+        if (intercept == T) {
+          if (length(beta) != p + 1) {
+            stop("Since type='full', p > n, and intercept=TRUE, beta must have length equal to ncol(x)+1")
+          }
+          # remove intercept if included
+          beta = beta[-1]
+        } else if (length(beta) != p) {
+          stop("Since family='gaussian', type='full' and intercept=FALSE, beta must have length equal to ncol(x)")
+        }
+      }
+    } else if (length(beta) != p) {
+      stop("Since family='gaussian' and type='partial', beta must have length equal to ncol(x)")
+    }
+    
     checkargs.misc(beta=beta,lambda=lambda,sigma=sigma,alpha=alpha,
                    gridrange=gridrange,tol.beta=tol.beta,tol.kkt=tol.kkt)
     if (!is.null(bits) && !requireNamespace("Rmpfr",quietly=TRUE)) {
       warning("Package Rmpfr is not installed, reverting to standard precision")
       bits = NULL
     }
+    
+    if (!is.null(add.targets) && (!is.vector(add.targets)
+                                  || !all(is.numeric(add.targets)) || !all(add.targets==floor(add.targets))
+                                  || !all(add.targets >= 1 && add.targets <= p))) {
+      stop("'add.targets' must be a vector of integers between 1 and p")
+    }
+    
+    # If glmnet was run with an intercept term, center x and y
+    if (intercept==TRUE) {
+      obj = standardize(x,y,TRUE,FALSE)
+      x = obj$x
+      y = obj$y
+    }
+    
+    # Check the KKT conditions
+    g = t(x)%*%(y-x%*%beta) / lambda
+    if (any(abs(g) > 1+tol.kkt * sqrt(sum(y^2))))
+      warning(paste("Solution beta does not satisfy the KKT conditions",
+                    "(to within specified tolerances)"))
+    
+    tol.coef = tol.beta * sqrt(n / colSums(x^2))
+    vars = which(abs(beta) > tol.coef)
+    sign_vars = sign(beta[vars])
+
+    if(sum(vars)==0){
+      cat("Empty model",fill=T)
+      return()
+    }
+
+    if (any(sign(g[vars]) != sign_vars)) {
+      warning(paste("Solution beta does not satisfy the KKT conditions",
+                    "(to within specified tolerances). You might try rerunning",
+                    "glmnet with a lower setting of the",
+                    "'thresh' parameter, for a more accurate convergence."))
+    }
+
+    # Get lasso polyhedral region, of form Gy >= u
+
+    logical.vars=rep(FALSE,p)
+    logical.vars[vars]=TRUE
+    
+    if (type == 'full') {
+       out = fixedLassoPoly(x, y, lambda, beta, logical.vars, inactive=TRUE)
+    } 
+    else {
+       out = fixedLassoPoly(x, y, lambda, beta, logical.vars)
+    }
+    
+    A = out$A
+    b = out$b
+    
+    # Check polyhedral region
+    tol.poly = 0.01
+    if (max(A %*% y - b) > tol.poly * sqrt(sum(y^2)))
+      stop(paste("Polyhedral constraints not satisfied; you must recompute beta",
+                 "more accurately. With glmnet, make sure to use exact=TRUE in coef(),",
+                 "and check whether the specified value of lambda is too small",
+                 "(beyond the grid of values visited by glmnet).",
+                 "You might also try rerunning glmnet with a lower setting of the",
+                 "'thresh' parameter, for a more accurate convergence."))
     
     # Estimate sigma
     if (is.null(sigma)) {
@@ -51,393 +134,366 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
       }
     }
     
-    n = nrow(x)
-    p = ncol(x)
-    beta = as.numeric(beta)
-    if (intercept == F & length(beta) != p) stop("Since intercept=FALSE, beta must have length equal to ncol(x)")
-    if (intercept == T & length(beta) != p+1) stop("Since intercept=TRUE, beta must have length equal to ncol(x)+1")
-    
-    
-    
-    if (intercept == T) {
-      bbeta = beta[-1]
-      # m=beta[-1]!=0  #active set
-      vars = which(abs(bbeta) > tol.beta * sqrt(n / colSums(x^2)))
-      xm=cbind(1,x[,vars])
-      bhat=c(beta[1],bbeta[vars]) # intcpt plus active vars
-    } else {
-      bbeta = beta
-      # m=beta!=0  #active set
-      vars = which(abs(bbeta) > tol.beta * sqrt(n / colSums(x^2)))
-      bhat=bbeta[vars] # active vars
-      xm=x[,vars]
+    # add additional targets for inference if provided
+    if (!is.null(add.targets)) {
+       # vars is boolean...
+       old_vars = vars & TRUE
+       vars[add.targets] = TRUE
+       sign_vars = sign(beta[vars]) 
+       sign_vars[!old_vars] = NA
+       stop("`add.targets` not fully implemented yet")
     }
-    xnotm=x[,-vars]
-    
-    # vars = which(abs(bbeta) > tol.beta / sqrt(colSums(x^2)))
-    nvar = length(vars)
-    if(nvar==0){
-      cat("Empty model",fill=T)
-      return()
-    }
-    
-    pv=vlo=vup=sd=rep(NA, nvar)
-    vmat = matrix(0,nvar,n)
-    ci=tailarea=matrix(NA,nvar,2)
-    
-    # If glmnet was run with an intercept term, center x and y
-    if (intercept==TRUE) {
-      obj = standardize(x,y,TRUE,FALSE)
-      x = obj$x
-      y = obj$y
-    }
-    
-    s2=sign(bhat)
-    
-    #check KKT
-    g = t(x)%*%(y-xm%*%bhat)/lambda # negative gradient scaled by lambda
-    # print(g[which(abs(g)>1)])
-    if (any(abs(g) > 1+tol.kkt) )
-      warning(paste("Solution beta does not satisfy the KKT conditions",
-                    "(to within specified tolerances)"))
-    
-    if (any(sign(g[vars]) != sign(bbeta[vars])))
-      warning(paste("Solution beta does not satisfy the KKT conditions",
-                    "(to within specified tolerances). You might try rerunning",
-                    "glmnet with a lower setting of the",
-                    "'thresh' parameter, for a more accurate convergence."))
-    
-    MM = pinv(crossprod(xm))*sigma^2
-    # gradient at LASSO solution, first entry is 0 because intercept is unpenalized
-    # at exact LASSO solution it should be s2[-1]
-    if (intercept == T) gm = c(0,-g[vars]*lambda)
-    else gm = -g[vars]*lambda
-    
-    dbeta = MM%*%gm
-    
-    bbar = bhat - dbeta
-    
-    # print(length(bhat))
-    
-    if (intercept == T) {
-      A1 = -(mydiag(s2))[-1,]
-      b1 = (s2*dbeta)[-1]
-      V = diag(length(bbar))[-1,]
-    } else {
-      A1 = -(mydiag(s2))
-      b1 = (s2*dbeta)
-      V = diag(length(bbar))
-    }
-    
-    null_value = rep(0,nvar)
-    
-    # if (p > n) {
-      if (type=="full") {
-        
-        
-        # Reorder so that active set is first
-        Xordered = cbind(xm,xnotm)
-        
-        hsigma <- 1/n*(t(Xordered)%*%Xordered)
 
-        M <- InverseLinfty(hsigma,n,dim(xm)[2],verbose=F)[-1,] # remove intercept row
-        I <- diag(dim(xm)[2])[-1,]
-        if (intercept) Msubset <- M[,-c(1,vars+1)]
-        else Msubset <- M[,-vars]
-        B <- cbind(I,Msubset/sqrt(n))
-        V = B
-        
-        c <- matrix(c(gm,t(xnotm)%*%xm%*%(-dbeta)),ncol=1)
-        d <- -dbeta[-1] # remove intercept
-        
-        null_value = -(M%*%c/sqrt(n) - d)
-        
-        A0 = matrix(0,ncol(xnotm),ncol(A1))
-        A0 = cbind(A0,diag(nrow(A0)))
-        fill = matrix(0,nrow(A1),nrow(A0))
-        A1 = cbind(A1,fill)
-        A1 = rbind(A1,A0,-A0)
-        
-        b1 = matrix(c(b1,rep(lambda,2*nrow(A0))),ncol=1)
-        
-        # full covariance
-        MMbr = (crossprod(xnotm) - t(xnotm)%*%xm%*%pinv(crossprod(xm))%*%t(xm)%*%xnotm)*sigma^2
-        MM = cbind(MM,matrix(0,nrow(MM),ncol(MMbr)))
-        MMbr = cbind(matrix(0,nrow(MMbr),nrow(MM)),MMbr)
-        MM = rbind(MM,MMbr)
-        
-        # # pairs bootstrap estimate of full covariance
-        # boot.vec <- function(data, indices, bbar) {
-        #   sample=data[indices,-1]
-        #   y=data[indices,1]
-        #   xa=sample[,1:length(bbar)]
-        #   xnota=sample[,-c(1:length(bbar))]
-        # 
-        #   return(c(bbar,t(xnota)%*%(y-xa%*%bbar)))
-        # }
-        # 
-        # R=100
-        # boot.obj=boot(cbind(y,Xordered),boot.vec,R,parallel="multicore",bbar=bbar)
-        # boot.est=boot.obj$t
-        # boot.mean=colMeans(boot.est)
-        # boot.diff=t(boot.est-boot.mean)
-        # temp=apply(boot.diff,2,function(vec){vec=matrix(vec,ncol=1);return(vec%*%t(vec))})
-        # term=array(0,dim=c(p+intercept,p+intercept,R))
-        # for(i in 1:R) {
-        #   term[,,i]=matrix(temp[,i],p+intercept,p+intercept)
-        # }
-        # boot.cov = apply(term,1:2,function(x){Reduce("+",x)})/(R-1)
-        # boot.cov[1:dim(MM)[1],1:dim(MM)[2]]=MM
-        # MM=boot.cov
-        
-        # # jacknife estimate of covariance
-        # jk.vec <- function(idx, Xordered, bbar) {
-        #   sample=Xordered[-idx,]
-        #   y=y[-idx]
-        #   xa=sample[,1:length(bbar)]
-        #   xnota=sample[,-c(1:length(bbar))]
-        # 
-        #   return(c(bbar,t(xnota)%*%(y-xa%*%bbar)))
-        # }
-        # 
-        # jk.est = matrix(0,p+intercept,p+intercept)
-        # for(i in 1:n) {
-        #   jk.est[i,]=jk.vec(i,Xordered,bbar)
-        # }
-        # jk.mean=colMeans(jk.est)
-        # jk.diff=t(jk.est-jk.mean)
-        # temp=apply(jk.diff,2,function(vec){vec=matrix(vec,ncol=1);return(vec%*%t(vec))})
-        # term=array(0,dim=c(p+intercept,p+intercept,n))
-        # for(i in 1:n) {
-        #   term[,,i]=matrix(temp[,i],p+intercept,p+intercept)
-        # }
-        # jk.cov = (n-1)*apply(term,1:2,function(x){Reduce("+",x)})/n
-        # jk.cov[1:dim(MM)[1],1:dim(MM)[2]]=MM
-        # MM=jk.cov
-
-
-
-        gnotm = g[-vars]*lambda
-        bbar = matrix(c(bbar,gnotm),ncol=1)
+    k = length(vars)
+    pv = vlo = vup = numeric(k)
+    vmat = matrix(0,k,n)
+    ci = tailarea = matrix(0,k,2)
+      
+    if (type=="full" & p > n) {
+      if (intercept == T) {
+        pp=p+1
+        Xint <- cbind(rep(1,n),x)
+        # indices of selected predictors
+        S = c(1,vars + 1)
+      } else {
+        pp=p
+        Xint <- x
+        # indices of selected predictors
+        S = vars
+        # notS = which(abs(beta) <= tol.coef)
       }
-    # }
-    
-    # Check polyhedral region
-    tol.poly = 0.01
-    if (max((A1 %*% bbar) - b1) > tol.poly)
-      stop(paste("Polyhedral constraints not satisfied; you must recompute beta",
-                 "more accurately. With glmnet, make sure to use exact=TRUE in coef(),",
-                 "and check whether the specified value of lambda is too small",
-                 "(beyond the grid of values visited by glmnet).",
-                 "You might also try rerunning glmnet with a lower setting of the",
-                 "'thresh' parameter, for a more accurate convergence."))
-    
-    sign = numeric(nvar)
-    coef0 = numeric(nvar)
-    
-    for (j in 1:nvar) {
-      if (verbose) cat(sprintf("Inference for variable %i ...\n",vars[j]))
       
-      vj = V[j,]
-      # mj = sqrt(sum(vj^2))
-      # vj = vj/mj
-      coef0[j] = sum(vj * bbar)
-      sign[j] = sign(coef0[j])
-      vj = vj * sign[j]
+      notS = setdiff(1:pp,S)
       
-      limits.info = TG.limits(bbar, A1, b1, vj, Sigma=MM)
-      if(is.null(limits.info)) return(list(pv=NULL,MM=MM,eta=vj))
-      a = TG.pvalue.base(limits.info, null_value=null_value[j], bits=bits)
-      pv[j] = a$pv
-      vlo[j] = a$vlo # * mj # Unstandardize (mult by norm of vj)
-      vup[j] = a$vup # * mj # Unstandardize (mult by norm of vj)
-      sd[j] = a$sd # * mj # Unstandardize (mult by norm of vj)
+      XS = Xint[,S]
+      hbetaS = hbeta[S]
       
-      a = TG.interval.base(limits.info, 
-                           alpha=alpha,
-                           gridrange=gridrange,
-                           flip=(sign[j]==-1),
-                           bits=bits)
-      ci[j,] = (a$int-null_value[j]) # * mj # Unstandardize (mult by norm of vj)
-      tailarea[j,] = a$tailarea
+      # Reorder so that active set S is first
+      Xordered = Xint[,c(S,notS,recursive=T)]
+      hsigmaS = 1/n*(t(XS)%*%XS) # hsigma[S,S]
+      hsigmaSinv = solve(hsigmaS) # pinv(hsigmaS)
+      
+      FS = rbind(diag(length(S)),matrix(0,pp-length(S),length(S)))
+      GS = cbind(diag(length(S)),matrix(0,length(S),pp-length(S)))
+
+      is_wide = n < (2 * p) # somewhat arbitrary decision -- it is really for when we don't want to form with pxp matrices
+
+      # Approximate inverse covariance matrix for when (n < p) from lasso_Inference.R
+      if (!is_wide) {
+           hsigma = 1/n*(t(Xordered)%*%Xordered)
+           htheta = debiasingMatrix(hsigma, is_wide, n, 1:length(S), verbose=FALSE, max_try=linesearch.try, warn_kkt=TRUE)
+           ithetasigma = (GS-(htheta%*%hsigma))
+      } else {
+           htheta = debiasingMatrix(Xordered, is_wide, n, 1:length(S), verbose=FALSE, max_try=linesearch.try, warn_kkt=TRUE)
+           ithetasigma = (GS-((htheta%*%t(Xordered)) %*% Xordered)/n)
+      }
+
+      M <- (((htheta%*%t(Xordered))+ithetasigma%*%FS%*%hsigmaSinv%*%t(XS))/n)
+      # vector which is offset for testing debiased beta's
+      null_value <- (((ithetasigma%*%FS%*%hsigmaSinv)%*%sign(hbetaS))*lambda/n)
+      if (intercept == T) {
+        M = M[-1,] # remove intercept row
+        null_value = null_value[-1] # remove intercept element
+      }
+    } else if (type=="partial" || p > n) {
+      xa = x[,vars,drop=F]
+      M = pinv(crossprod(xa)) %*% t(xa)
+      null_value = rep(0,k)
+    } else {
+      M = pinv(crossprod(x)) %*% t(x)
+      M = M[vars,,drop=F]
+      null_value = rep(0,k)
     }
-    
-    out = list(type=type,lambda=lambda,pv=pv,ci=ci,
-               tailarea=tailarea,vlo=vlo,vup=vup,y=y,
-               vars=vars,sign=sign,sigma=sigma,alpha=alpha,
-               sd=sd,
-               coef0=coef0,
-               call=this.call)
-    class(out) = "fixedLassoInf"
-    return(out)
+
+  for (j in 1:k) {
+    if (verbose) cat(sprintf("Inference for variable %i ...\n",vars[j]))
+
+    vj = M[j,]
+    mj = sqrt(sum(vj^2))
+    vj = vj / mj        # Standardize (divide by norm of vj)
+
+    if (!is.na(sign_vars[j])) {
+        vj = sign_vars[j] * vj
+    }
+
+    limits.info = TG.limits(y, A, b, vj, Sigma=diag(rep(sigma^2, n)))
+    a = TG.pvalue.base(limits.info, null_value=null_value[j], bits=bits)
+    pv[j] = a$pv
+    if (is.na(sign_vars[j])) { # for variables not in the active set, report 2-sided pvalue
+       pv[j] = 2 * min(pv[j], 1 - pv[j])
+    }
+    vlo[j] = a$vlo * mj # Unstandardize (mult by norm of vj)
+    vup[j] = a$vup * mj # Unstandardize (mult by norm of vj)
+    if (!is.na(sign_vars[j])) { 
+        vmat[j,] = vj * mj * sign_vars[j]  # Unstandardize (mult by norm of vj) and fix sign
+    } else {
+        vmat[j,] = vj * mj # Unstandardize (mult by norm of vj)
+    }
+    a = TG.interval.base(limits.info, 
+                         alpha=alpha,
+                         gridrange=gridrange,
+			 flip=(sign_vars[j]==-1),
+                         bits=bits)
+    ci[j,] = (a$int-null_value[j]) * mj # Unstandardize (mult by norm of vj)
+    tailarea[j,] = a$tailarea
   }
+
+  out = list(type=type,lambda=lambda,pv=pv,ci=ci,
+    tailarea=tailarea,vlo=vlo,vup=vup,vmat=vmat,y=y,
+    vars=vars,sign=sign_vars,sigma=sigma,alpha=alpha,
+    sd=sigma*sqrt(rowSums(vmat^2)),
+    coef0=vmat%*%y,
+    call=this.call)
+  class(out) = "fixedLassoInf"
+  return(out)
+}
 }
 
 #############################
 
 
-fixedLasso.poly=
-  function(x, y, beta, lambda, a, inactive = FALSE) {
-    xa = x[,a,drop=F]
-    xac = x[,!a,drop=F]
-    xai = pinv(crossprod(xa))
-    xap = xai %*% t(xa)
-    za = sign(beta[a])
-    if (length(za)>1) dz = diag(za)
-    if (length(za)==1) dz = matrix(za,1,1)
-    
-    if (inactive) {
-      P = diag(1,nrow(xa)) - xa %*% xap
-      
-      G = -rbind(
-        1/lambda * t(xac) %*% P,
-        -1/lambda * t(xac) %*% P,
-        -dz %*% xap
-      )
-      lambda2=lambda
-      if(length(lambda)>1) lambda2=lambda[a]
-      u = -c(
-        1 - t(xac) %*% t(xap) %*% za,
-        1 + t(xac) %*% t(xap) %*% za,
-        -lambda2 * dz %*% xai %*% za)
+fixedLassoPoly =
+  function(X, y, lambda, beta, active, inactive = FALSE) {
+
+    XA = X[, active, drop=FALSE]
+    XI = X[, !active, drop=FALSE]
+    XAi = pinv(crossprod(XA))
+    XAp = XAi %*% t(XA)
+    Ir = t(XI) %*% t(XAp)  # matrix in the "irrepresentable" condition
+
+    if(length(lambda)>1) {
+       lambdaA= lambda[active]
+       lambdaI = lambda[!active]
     } else {
-      G = -rbind(
-        #   1/lambda * t(xac) %*% P,
-        # -1/lambda * t(xac) %*% P,
-        -dz %*% xap
+       lambdaA = rep(lambda, sum(active))
+       lambdaI = rep(lambda, sum(!active))
+    }
+
+    penalized = lambdaA != 0
+    signA = sign(beta[active])
+    active_subgrad = signA * lambdaA
+    if (length(signA)>1) sign_diag = diag(signA)
+    if (length(signA)==1) sign_diag = matrix(signA, 1, 1)
+    
+    if (inactive) { # should we include the inactive constraints?
+      RA = diag(rep(1, nrow(XA))) - XA %*% XAp # RA is residual forming matrix of selected model
+      
+      A = rbind(
+        t(XI) %*% RA,
+        -t(XI) %*% RA,
+        -(sign_diag %*% XAp)[penalized,] # no constraints for unpenalized
       )
-      lambda2=lambda
-      if(length(lambda)>1) lambda2=lambda[a]
-      u = -c(
-        #   1 - t(xac) %*% t(xap) %*% za,
-        #   1 + t(xac) %*% t(xap) %*% za,
-        -lambda2 * dz %*% xai %*% za)
+
+      b = c(
+        lambdaI - Ir %*% active_subgrad,
+        lambdaI + Ir %*% active_subgrad,
+        -(sign_diag %*% XAi %*% active_subgrad)[penalized])
+    } else {
+      A = -(sign_diag %*% XAp)[penalized,]  # no constraints for unpenalized
+      b = -(sign_diag %*% XAi %*% active_subgrad)[penalized]
     }
     
-    return(list(G=G,u=u))
+    return(list(A=A, b=b))
   }
 
 ##############################
 
-### Functions borrowed and slightly modified from lasso_inference.R
-
 ## Approximates inverse covariance matrix theta
-InverseLinfty <- function(sigma, n, e, resol=1.2, mu=NULL, maxiter=50, threshold=1e-2, verbose = TRUE, max.try=10) {
-    isgiven <- 1;
-  if (is.null(mu)){
-    isgiven <- 0;
+## using coordinate descent 
+
+debiasingMatrix = function(Xinfo,               # could be X or t(X) %*% X / n depending on is_wide
+                           is_wide,
+                           nsample, 
+                           rows, 
+ 		           verbose=FALSE, 
+		           mu=NULL,             # starting value of mu
+   			   linesearch=TRUE,     # do a linesearch?
+   		           scaling_factor=1.5,  # multiplicative factor for linesearch
+			   max_active=NULL,     # how big can active set get?
+			   max_try=10,          # how many steps in linesearch?
+			   warn_kkt=FALSE,      # warn if KKT does not seem to be satisfied?
+			   max_iter=100,        # how many iterations for each optimization problem
+                           kkt_tol=1.e-4,       # tolerance for the KKT conditions
+			   objective_tol=1.e-8  # tolerance for relative decrease in objective
+                           ) {
+
+
+  if (is.null(max_active)) {
+     max_active = max(50, 0.3 * nsample)
+  } 
+
+  p = ncol(Xinfo);
+  M = matrix(0, length(rows), p);
+
+  if (is.null(mu)) {
+      mu = (1/sqrt(nsample)) * qnorm(1-(0.1/(p^2)))
   }
-  
-  p <- nrow(sigma);
-  M <- matrix(0, e, p);
+ 
   xperc = 0;
   xp = round(p/10);
-  for (i in 1:e) {
-    if ((i %% xp)==0){
+  idx = 1;
+  for (row in rows) {
+    if ((idx %% xp)==0){
       xperc = xperc+10;
       if (verbose) {
         print(paste(xperc,"% done",sep="")); }
     }
-    if (isgiven==0){
-      mu <- (1/sqrt(n)) * qnorm(1-(0.1/(p^2)));
-    }
-    mu.stop <- 0;
-    try.no <- 1;
-    incr <- 0;
 
-    output = NULL
+    output = debiasingRow(Xinfo,               # could be X or t(X) %*% X / n depending on is_wide
+                          is_wide,
+                          row,
+                          mu,
+                          linesearch=linesearch,
+                          scaling_factor=scaling_factor,
+                          max_active=max_active,
+			  max_try=max_try,
+			  warn_kkt=FALSE,
+			  max_iter=max_iter,
+			  kkt_tol=kkt_tol,
+			  objective_tol=objective_tol)
 
-    while ((mu.stop != 1) && (try.no<max.try) ){
-      last.beta <- beta
-      output <- InverseLinftyOneRow(sigma, i, mu, maxiter=maxiter, soln_result=output) # uses a warm start
-      beta <- output$soln
-      iter <- output$iter
-      if (isgiven==1) {
-        mu.stop <- 1
-      }
-      else{
-        if (try.no==1){
-          if (iter == (maxiter+1)){
-            incr <- 1;
-            mu <- mu*resol;
-          } else {
-            incr <- 0;
-            mu <- mu/resol;
-          }
-        }
-        if (try.no > 1){
-          if ((incr == 1)&&(iter == (maxiter+1))){
-            mu <- mu*resol;
-          }
-          if ((incr == 1)&&(iter < (maxiter+1))){
-            mu.stop <- 1;
-          }
-          if ((incr == 0)&&(iter < (maxiter+1))){
-            mu <- mu/resol;
-          }
-          if ((incr == 0)&&(iter == (maxiter+1))){
-            mu <- mu*resol;
-            beta <- last.beta;
-            mu.stop <- 1;
-          }
-        }
-      }
-      try.no <- try.no+1
+    if (warn_kkt && (!output$kkt_check)) {
+       warning("Solution for row of M does not seem to be feasible")
+    } 
+  
+    if (!is.null(output$soln)) {
+        M[idx,] = output$soln;
+    } else {
+        stop(paste("Unable to approximate inverse row ", row));
     }
-    M[i,] <- beta;
+
+    idx = idx + 1;
   }
   return(M)
 }
 
-InverseLinftyOneRow <- function (Sigma, i, mu, maxiter=50, soln_result=NULL, kkt_tol=1.e-6, objective_tol=1.e-6,
-		                 use_QP=TRUE) {
+# Find one row of the debiasing matrix -- assuming X^TX/n is not too large -- i.e. X is tall
 
-  # If soln_result is not Null, it is used as a warm start.
-  # It should be a list
-  # with entries "soln", "gradient", "ever_active", "nactive"
+debiasingRow = function (Xinfo,               # could be X or t(X) %*% X / n depending on is_wide
+                         is_wide, 
+                         row, 
+                         mu, 
+	                 linesearch=TRUE,     # do a linesearch?
+		         scaling_factor=1.2,  # multiplicative factor for linesearch
+		         max_active=NULL,     # how big can active set get?
+			 max_try=10,          # how many steps in linesearch?
+			 warn_kkt=FALSE,      # warn if KKT does not seem to be satisfied?
+			 max_iter=100,        # how many iterations for each optimization problem
+                         kkt_tol=1.e-4,       # tolerance for the KKT conditions
+			 objective_tol=1.e-8  # tolerance for relative decrease in objective
+                         ) {
 
-  p = nrow(Sigma)
+  p = ncol(Xinfo)
 
-  if (is.null(soln_result)) {
-     soln = rep(0, p)
-     ever_active = rep(0, p)
-     ever_active[1] = i      # 1-based
-     ever_active = as.integer(ever_active)
-     nactive = as.integer(1)
-     if (use_QP) {
-          linear_func = rep(0, p)
-	  linear_func[i] = -1
-	  linear_func = as.numeric(linear_func)
-	  gradient = 1. * linear_func 
-     } else {
-          gradient = rep(0, p)
-     }
-  }
-  else {
-     soln = soln_result$soln
-     gradient = soln_result$gradient  
-     ever_active = as.integer(soln_result$ever_active)
-     nactive = as.integer(soln_result$nactive)
-     if (use_QP) { 
-         linear_func = soln_result$linear_func
-     }
+  if (is.null(max_active)) {
+      max_active = min(nrow(Xinfo), ncol(Xinfo))
   }
 
-  if (use_QP) {
-      result = solve_QP(Sigma, mu, maxiter, soln, linear_func, gradient, ever_active, nactive, kkt_tol, objective_tol) 
-  } else {
-      result = find_one_row_debiasingM(Sigma, i, mu, maxiter, soln, gradient, ever_active, nactive, kkt_tol, objective_tol) # C function uses 1-based indexing for active set
-  }
+  # Initialize variables 
+
+  soln = rep(0, p)
+  ever_active = rep(0, p)
+  ever_active[1] = row      # 1-based
+  ever_active = as.integer(ever_active)
+  nactive = as.integer(1)
+
+  linear_func = rep(0, p)
+  linear_func[row] = -1
+  linear_func = as.numeric(linear_func)
+  gradient = 1. * linear_func 
+
+  counter_idx = 1;
+  incr = 0;
+
+  last_output = NULL
+
+  while (counter_idx < max_try) {
+
+      if (!is_wide) {
+          result = solve_QP(Xinfo, # this is non-neg-def matrix
+                            mu, 
+                            max_iter, 
+                            soln, 
+                            linear_func, 
+                            gradient, 
+                            ever_active, 
+                            nactive, 
+                            kkt_tol, 
+                            objective_tol, 
+                            max_active) 
+      } else {
+          Xsoln = rep(0, nrow(Xinfo))
+          result = solve_QP_wide(Xinfo, # this is a design matrix
+                                 mu, 
+                                 max_iter, 
+                                 soln, 
+                                 linear_func, 
+                                 gradient, 
+                                 Xsoln,
+                                 ever_active, 
+                                 nactive, 
+                                 kkt_tol, 
+                                 objective_tol, 
+                                 max_active) 
+
+      }
+
+      iter = result$iter
+
+      # Logic for whether we should continue the line search
+
+      if (!linesearch) {
+        break
+      }
+
+      if (counter_idx == 1){
+        if (iter == (max_iter+1)){
+           incr = 1; # was the original problem feasible? 1 if not
+         } else {
+           incr = 0; # original problem was feasible
+         }
+      } 
+
+      if (incr == 1) { # trying to find a feasible point
+         if ((iter < (max_iter+1)) && (counter_idx > 1)) { 
+           break;      # we've found a feasible point and solved the problem            
+         }
+         mu = mu * scaling_factor;
+      } else {         # trying to drop the bound parameter further
+         if ((iter == (max_iter + 1)) && (counter_idx > 1)) {
+            result = last_output; # problem seems infeasible because we didn't solve it
+   	    break;                # so we revert to previously found solution
+         }
+         mu = mu / scaling_factor;
+      }
+
+      # If the active set has grown to a certain size
+      # then we stop, presuming problem has become
+      # infeasible.
+
+      # We revert to the previous solution
+	
+      if (result$max_active_check) {
+	  result = last_output;
+	  break;
+      }
+      
+      counter_idx = counter_idx + 1
+      last_output = list(soln=result$soln,
+                         kkt_check=result$kkt_check)
+    }
 
   # Check feasibility
 
-  if (!result$kkt_check) {
+  if (warn_kkt && (!result$kkt_check)) {
      warning("Solution for row of M does not seem to be feasible")
   } 
 
-  return(result)
+  return(list(soln=result$soln,
+              kkt_check=result$kkt_check))
 
 }
+
 
 ##############################
 
@@ -478,4 +534,3 @@ print.fixedLassoInf <- function(x, tailarea=TRUE, ...) {
  # lambda = 2*mean(apply(t(x)%*%eps,2,max))
  # return(lambda)
 #}
-
