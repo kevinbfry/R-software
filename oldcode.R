@@ -628,6 +628,7 @@ oldFixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial",
       ithetasigma = (diag(pp)-(htheta%*%hsigma))
 
       M <- (((htheta%*%t(Xordered))+ithetasigma%*%FS%*%hsigmaSinv%*%t(XS))/n)
+      M = M[vars,,drop=FALSE]
       # vector which is offset for testing debiased beta's
       meanoffset <- -(((ithetasigma%*%FS%*%hsigmaSinv)%*%sign(hbetaS))*lambda/n)
       if (intercept == T) {
@@ -669,7 +670,7 @@ oldFixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial",
                vars=vars,sign=sign,sigma=sigma,alpha=alpha,
                sd=sigma*sqrt(rowSums(vmat^2)),
                coef0=vmat%*%y,
-               call=this.call)
+               call=this.call,M=M)
     class(out) = "fixedLassoInf"
     return(out)
   }
@@ -761,98 +762,3 @@ poly.int <- function(y, G, u, v, sigma, alpha, offset=0, gridrange=c(-100,100),
   
   return(list(int=int,tailarea=tailarea))
 }
-
-##############################################
-
-# Runs nsims simulations under the global null, computing p-values
-# using both the old code (slow one using Adel's code) and the new
-# code (faster using Jon's code), and produces qq-plots for both.
-# Runing 50 sims takes about 10-15 mins because old code is slow, so
-# feel free to lower nsims if you want
-
-
-
-# loading current version from github
-library(devtools)
-devtools::install_github('selective-inference/R-software/selectiveInference')
-library(selectiveInference)
-
-library(glmnet)
-
-# set.seed(424)
-
-n=100
-p=200
-
-lambda=1
-sigma=.5
-thresh = 1e-10
-#beta=c(3,2,-1,4,-2,2,rep(0,p-6))
-
-beta=rep(0,p)
-
-null.setting=sum(abs(beta))==0
-tr=beta!=0
-
-type="full"
-# type="partial"
-
-nsim = 50
-nzb=0
-pvals <- matrix(NA, nrow=nsim, ncol=p)
-pvs <- c()
-# x = matrix(rnorm(n*p),n,p)
-# x = scale(x,T,T)/sqrt(n-1)
-# mu = x%*%beta 
-
-for (i in 1:nsim) {
-  cat(i,fill=T)
-  x = matrix(rnorm(n*p),n,p)
-  x = scale(x,T,T)/sqrt(n-1)
-  mu = x%*%beta 
-  y=mu+sigma*rnorm(n)
-  # y=y-mean(y)
-  # first run  glmnet
-  gfit=glmnet(x,y,intercept=T,standardize=F,thresh=thresh)
-  # print("---")
-  #extract coef for a given lambda; Note the 1/n factor!
-  # bhat = coef(gfit, s=lambda/n, exact=TRUE,thresh=1e-12,x=x,y=y)[-1]
-  # cat(sum(bhat!=0),fill=T)
-  bhat = coef(gfit, s=lambda/n, exact=TRUE,x=x,y=y)[-1]
-  # cat(sum(bhat!=0),fill=T)
-  nzb=nzb+sum(bhat!=0)
-  # compute fixed lambda p-values and selection intervals
-  aa = fixedLassoInf(x,y,bhat,lambda,intercept=F,sigma=sigma,type=type)
-  pvals[i, aa$vars] <- aa$pv
-  bb = oldFixedLassoInf(x,y,bhat,lambda,intercept=F,sigma=sigma,type=type)
-  pvs <- c(pvs,bb$pv,recursive=T)
-  cat()
-}
-
-# summarize results
-if(!null.setting){
-  if(type=="partial"){
-    nulls=rowSums(is.na(pvals[,tr]))==0  # for type=partial, nonnull setting
-    np = pvals[nulls,-(1:sum(beta!=0))]
-  }
-  
-  if(type=="full"){
-    nulls=1:nrow(pvals)   # for type=full  non null setting
-    np = pvals[nulls,-(1:sum(beta!=0))]
-  }
-}
-
-
-if(null.setting) np=pvals         #for null setting
-
-o=!is.na(np)
-
-print(np)
-
-#check uniformity 
-
-plot(c(0,1),c(0,1),type="l")
-abline(0,1)
-points(x=1:length(pvs)/length(pvs),y=sort(pvs),xlab="Expected pvalue",ylab="Observed pvalue",main=paste("lambda =",lambda,", sigma =", sigma, ", thresh =", thresh),pch=23,bg="green")
-points((1:sum(o))/sum(o),sort(np[o]),pch=24,bg="purple")
-legend("bottomright",legend=c("Old","New"),pch=c(23,24),pt.bg=c("green","purple"))

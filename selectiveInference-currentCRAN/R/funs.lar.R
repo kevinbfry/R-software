@@ -254,7 +254,14 @@ downdateQR <- function(Q1,Q2,R,col) {
   m = nrow(Q1)
   n = ncol(Q1)
 
-  a = downdate1_(as.matrix(Q1), R, col, m, n) # Rcpp call
+  a = .C("downdate1",
+    Q1=as.double(Q1),
+    R=as.double(R),
+    col=as.integer(col-1),
+    m=as.integer(m),
+    n=as.integer(n),
+    dup=FALSE,
+    package="selectiveInference")
 
   Q1 = matrix(a$Q1,nrow=m)
   R = matrix(a$R,nrow=n)
@@ -288,14 +295,14 @@ coef.lar <- function(object, s, mode=c("step","lambda"), ...) {
   if (mode=="step") {
     if (min(s)<0 || max(s)>k) stop(sprintf("s must be between 0 and %i",k))
     knots = 1:k
-    decreasing = FALSE
+    dec = FALSE
   } else {
     if (min(s)<min(lambda)) stop(sprintf("s must be >= %0.3f",min(lambda)))
     knots = lambda
-    decreasing = TRUE
+    dec = TRUE
   }
 
-  return(coef.interpolate(beta,s,knots,decreasing))
+  return(coef.interpolate(beta,s,knots,dec))
 }
 
 # Prediction function for lar
@@ -303,10 +310,7 @@ coef.lar <- function(object, s, mode=c("step","lambda"), ...) {
 predict.lar <- function(object, newx, s, mode=c("step","lambda"), ...) {
   beta = coef.lar(object,s,mode)
   if (missing(newx)) newx = scale(object$x,FALSE,1/object$sx)
-  else {
-    newx = matrix(newx,ncol=ncol(object$x))
-    newx = scale(newx,object$bx,FALSE)
-  }
+  else newx = scale(newx,object$bx,FALSE)
   return(newx %*% beta + object$by)
 }
 
@@ -367,25 +371,20 @@ larInf <- function(obj, sigma=NULL, alpha=0.1, k=NULL, type=c("active","all","ai
     for (j in 1:k) {
       if (verbose) cat(sprintf("Inference for variable %i ...\n",vars[j]))
 
-      Aj = -G[1:nk[j],]
-      bj = -rep(0,nk[j])
+      Gj = G[1:nk[j],]
+      uj = rep(0,nk[j])
       vj = vreg[j,]
       mj = sqrt(sum(vj^2))
       vj = vj / mj              # Standardize (divide by norm of vj)
-
-      limits.info = TG.limits(y, Aj, bj, vj, Sigma=diag(rep(sigma^2, n)))
-      a = TG.pvalue.base(limits.info, bits=bits)
+      a = poly.pval(y,Gj,uj,vj,sigma,bits)
       pv[j] = a$pv
       sxj = sx[vars[j]]
       vlo[j] = a$vlo * mj / sxj # Unstandardize (mult by norm of vj / sxj)
       vup[j] = a$vup * mj / sxj # Unstandardize (mult by norm of vj)
       vmat[j,] = vj * mj / sxj  # Unstandardize (mult by norm of vj / sxj)
 
-      a = TG.interval.base(limits.info,
-                           alpha=alpha,
-                           gridrange=gridrange,
-                           flip=(sign[j]==-1),
-                           bits=bits)
+      a = poly.int(y,Gj,uj,vj,sigma,alpha,gridrange=gridrange,
+        flip=(sign[j]==-1),bits=bits)
       ci[j,] = a$int * mj / sxj # Unstandardize (mult by norm of vj / sxj)
       tailarea[j,] = a$tailarea
 
@@ -428,23 +427,18 @@ larInf <- function(obj, sigma=NULL, alpha=0.1, k=NULL, type=c("active","all","ai
       vj = vj / mj             # Standardize (divide by norm of vj)
       sign[j] = sign(sum(vj*y))
       vj = sign[j] * vj
-      Aj = -rbind(G,vj)
-      bj = -c(u,0)
+      Gj = rbind(G,vj)
+      uj = c(u,0)
 
-      limits.info = TG.limits(y, Aj, bj, vj, Sigma=diag(rep(sigma^2, n)))
-      a = TG.pvalue.base(limits.info, bits=bits)
-
+      a = poly.pval(y,Gj,uj,vj,sigma,bits)
       pv[j] = a$pv
       sxj = sx[vars[j]]
       vlo[j] = a$vlo * mj / sxj # Unstandardize (mult by norm of vj / sxj)
       vup[j] = a$vup * mj / sxj # Unstandardize (mult by norm of vj / sxj)
       vmat[j,] = vj * mj / sxj  # Unstandardize (mult by norm of vj / sxj)
 
-      a = TG.interval.base(limits.info,
-                           alpha=alpha,
-                           gridrange=gridrange,
-                           flip=(sign[j]==-1),
-                           bits=bits)
+      a = poly.int(y,Gj,uj,vj,sigma,alpha,gridrange=gridrange,
+        flip=(sign[j]==-1),bits=bits)
       ci[j,] = a$int * mj / sxj # Unstandardize (mult by norm of vj / sxj)
       tailarea[j,] = a$tailarea
     }
