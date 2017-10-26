@@ -243,7 +243,7 @@ fixedLassoInf <- function(x, y, beta,
     vars=vars,sign=sign_vars,sigma=sigma,alpha=alpha,
     sd=sigma*sqrt(rowSums(vmat^2)),
     coef0=vmat%*%y,
-    call=this.call)
+    call=this.call,M=M)
   class(out) = "fixedLassoInf"
   return(out)
 }

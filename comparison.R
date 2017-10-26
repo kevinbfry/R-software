@@ -628,6 +628,7 @@ oldFixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial",
       ithetasigma = (diag(pp)-(htheta%*%hsigma))
 
       M <- (((htheta%*%t(Xordered))+ithetasigma%*%FS%*%hsigmaSinv%*%t(XS))/n)
+      M = M[vars,,drop=FALSE]
       # vector which is offset for testing debiased beta's
       meanoffset <- -(((ithetasigma%*%FS%*%hsigmaSinv)%*%sign(hbetaS))*lambda/n)
       if (intercept == T) {
@@ -669,7 +670,7 @@ oldFixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial",
                vars=vars,sign=sign,sigma=sigma,alpha=alpha,
                sd=sigma*sqrt(rowSums(vmat^2)),
                coef0=vmat%*%y,
-               call=this.call)
+               call=this.call,M=M)
     class(out) = "fixedLassoInf"
     return(out)
   }
@@ -771,12 +772,7 @@ poly.int <- function(y, G, u, v, sigma, alpha, offset=0, gridrange=c(-100,100),
 # feel free to lower nsims if you want
 
 
-
-# loading current version from github
-library(devtools)
-devtools::install_github('selective-inference/R-software/selectiveInference')
 library(selectiveInference)
-
 library(glmnet)
 
 # set.seed(424)
@@ -797,7 +793,7 @@ tr=beta!=0
 type="full"
 # type="partial"
 
-nsim = 10
+nsim = 5
 nzb=0
 pvals <- matrix(NA, nrow=nsim, ncol=p)
 pvs_old = c()
