@@ -76,11 +76,11 @@ InverseLinftyOneRow <- function ( sigma, i, mu, maxiter=50, threshold=1e-2 ) {
   mu0 <- rho/(1+rho);
   beta <- rep(0,p);
   
-  if (mu >= mu0){
-    beta[i] <- (1-mu0)/sigma[i,i];
-    returnlist <- list("optsol" = beta, "iter" = 0);
-    return(returnlist);
-  }
+  # if (mu >= mu0){
+  #   beta[i] <- (1-mu0)/sigma[i,i];
+  #   returnlist <- list("optsol" = beta, "iter" = 0);
+  #   return(returnlist);
+  # }
   
   diff.norm2 <- 1;
   last.norm2 <- 1;
@@ -628,7 +628,9 @@ oldFixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial",
       ithetasigma = (diag(pp)-(htheta%*%hsigma))
 
       M <- (((htheta%*%t(Xordered))+ithetasigma%*%FS%*%hsigmaSinv%*%t(XS))/n)
-      M = M[vars,,drop=FALSE]
+      # M = M[vars,,drop=FALSE] # M is computed with predictors ordered such that selected 
+                                # vars are first k=length(vars) rows, and pvalues are only
+                                # computed for first k rows of M
       # vector which is offset for testing debiased beta's
       meanoffset <- -(((ithetasigma%*%FS%*%hsigmaSinv)%*%sign(hbetaS))*lambda/n)
       if (intercept == T) {
