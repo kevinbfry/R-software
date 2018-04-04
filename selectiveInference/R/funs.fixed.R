@@ -66,7 +66,6 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
 
     xnotm=x[,-vars]
     
-    # vars = which(abs(bbeta) > tol.beta / sqrt(colSums(x^2)))
     nvar = length(vars)
     if(nvar==0){
       cat("Empty model",fill=T)
@@ -98,7 +97,7 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
                     "glmnet with a lower setting of the",
                     "'thresh' parameter, for a more accurate convergence."))
     
-    MM = pinv(crossprod(xm))/sigma^2
+    MM = pinv(crossprod(xm))
     # gradient at LASSO solution, first entry is 0 because intercept is unpenalized
     # at exact LASSO solution it should be s2[-1]
     gm = -g[vars]*lambda
@@ -114,7 +113,6 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
     null_value = rep(0,nvar)
     
     if (p > n && type=="full") {
-        
         
         # Reorder so that active set is first
         Xordered = cbind(xm,xnotm)
@@ -141,9 +139,9 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
         
         b1 = matrix(c(b1,rep(lambda,2*nrow(A0))),ncol=1)
         
-        # full covariance
+        # full covariance JT: covariance of what and what?
         MMbr = (crossprod(xnotm) - t(xnotm)%*%xm%*%pinv(crossprod(xm))%*%t(xm)%*%xnotm)*sigma^2
-        MM = cbind(MM,matrix(0,nrow(MM),ncol(MMbr)))
+        MM = cbind(MM*sigma^2,matrix(0,nrow(MM),ncol(MMbr)))
         MMbr = cbind(matrix(0,nrow(MMbr),nrow(MM)),MMbr)
         MM = rbind(MM,MMbr)
 
@@ -174,7 +172,7 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
       sign[j] = sign(coef0[j])
       vj = vj * sign[j]
       
-      limits.info = TG.limits(bbar, A1, b1, vj, Sigma=MM)
+      limits.info = TG.limits(bbar, A1, b1, vj, Sigma=MM*sigma^2)
       if(is.null(limits.info)) return(list(pv=NULL,MM=MM,eta=vj))
       a = TG.pvalue.base(limits.info, null_value=null_value[j], bits=bits)
       pv[j] = a$pv
