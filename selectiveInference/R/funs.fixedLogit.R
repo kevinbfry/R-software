@@ -85,10 +85,12 @@ fixedLogitLassoInf=function(x,y,beta,lambda,alpha=.1, type=c("partial","full"), 
     hsigma <- 1/n*(t(Xordered)%*%w%*%Xordered)
     
     M <- matrix(InverseLinfty(hsigma,n,dim(xm)[2],verbose=F,max.try=10),ncol=p+1)[-1,] # remove intercept row
+    # I <- matrix(diag(dim(xm)[2]),nrow=dim(xm)[2])
     I <- matrix(diag(dim(xm)[2])[-1,],nrow=dim(xm)[2]-1)
     if (is.null(dim(M))) Msubset <- M[-c(1,vars+1)]
     else Msubset <- M[,-c(1,vars+1)]
-    Msubset = matrix(Msubset,nrow=dim(xm)[2]-1)
+    # Msubset = matrix(Msubset,nrow=dim(xm)[2])
+    # Msubset = matrix(Msubset,nrow=dim(xm)[2]-1)
     # print("*********")
     # print(Msubset)
     # print(I)
@@ -98,81 +100,60 @@ fixedLogitLassoInf=function(x,y,beta,lambda,alpha=.1, type=c("partial","full"), 
     c <- matrix(c(gm,t(xnotm)%*%w%*%xm%*%(-dbeta)),ncol=1)
     d <- -dbeta[-1] # remove intercept
     
+    # d <- matrix(-dbeta,ncol=1) # remove intercept
+    # d <- matrix(-dbeta*lambda,ncol=1) # remove intercept
+    # print(dim(xnotm))
+    # print(dim(w))
+    # print(dim(xm))
+    # c <- matrix(c(gm,t(xnotm)%*%w%*%xm%*%d),ncol=1)
+    # c <- matrix(c(gm[-1],t(xnotm)%*%w%*%xm%*%d),ncol=1)
+    # d <- d[-1,]
+    
+    # print(dim(c))
+    # print(dim(M))
+    # print(length(d))
+    
     null_value = -(M%*%c/sqrt(n) - d)
+    # null_value = -(M[,-1]%*%c/sqrt(n) - d)
+    
+    # A0 = (t(xnotm)%*%w%*%xm)/lambda
+    # A0 = cbind(A0,matrix(0,nrow(A0),ncol(xnotm)))
+    # A0 = rbind(A0,-A0)
+    # 
+    # b0 = matrix(t(xnotm)%*%w%*%(z/lambda+xm%*%MM%*%gm),ncol=1)
+    # 
+    # 
+    # print("------")
+    # print(dim(A0))
+    # print(dim(b0))
+    # print(length(b1))
+    
+    
+    # b1 = rbind(1+b0,1-b0,matrix(b1,ncol=1))
     
     A0 = matrix(0,ncol(xnotm),ncol(A1))
     A0 = cbind(A0,diag(nrow(A0)))
-    fill = matrix(0,nrow(A1),nrow(A0))
+    fill = matrix(0,nrow(A1),ncol(xnotm))
     A1 = cbind(A1,fill)
     A1 = rbind(A1,A0,-A0)
     
     b1 = matrix(c(b1,rep(lambda,2*nrow(A0))),ncol=1)
     
     # full covariance
-    MMbr = t(xnotm)%*%w%*%xnotm - t(xnotm)%*%w%*%xm%*%MM%*%t(xm)%*%w%*%xnotm
+    MMbr = (t(xnotm)%*%w%*%xnotm - t(xnotm)%*%w%*%xm%*%MM%*%t(xm)%*%w%*%xnotm) # matrix(0,ncol(xnotm),ncol(xnotm))
     MM = cbind(MM,matrix(0,nrow(MM),ncol(MMbr)))
     MMbr = cbind(matrix(0,nrow(MMbr),nrow(MM)),MMbr)
+    # print(dim(MM))
+    # print(dim(MMbr))
     MM = rbind(MM,MMbr)
-
-    # # pairs bootstrap estimate of full covariance
-    # boot.vec <- function(data, indices, bbar) {
-    #   sample=data[indices,-1]
-    #   y=data[indices,1]
-    #   xa=sample[,1:length(bbar)]
-    #   xnota=sample[,-c(1:length(bbar))]
-    #   # print(dim(xnota))
-    # 
-    #   return(c(bbar,t(xnota)%*%(y-xa%*%bbar)))
-    #   # return(c(t(xnota)%*%(y-xa%*%bbar)))
-    # }
-    # 
-    # R=100
-    # boot.obj=boot(cbind(y,Xordered),boot.vec,R,parallel="multicore",bbar=bbar)
-    # boot.est=boot.obj$t
-    # # print(dim(boot.est))
-    # boot.mean=colMeans(boot.est)
-    # boot.diff=t(boot.est-boot.mean)
-    # temp=apply(boot.diff,2,function(vec){vec=matrix(vec,ncol=1);return(vec%*%t(vec))})
-    # term=array(0,dim=c(p+1,p+1,R))
-    # for(i in 1:R) {
-    #   term[,,i]=matrix(temp[,i],p+1,p+1)
-    # }
-    # boot.cov = apply(term,1:2,function(x){Reduce("+",x)})/(R-1)
-    # boot.cov[1:dim(MM)[1],1:dim(MM)[2]]=MM
-    # MM=boot.cov
-    # print(dim(boot.cov))
-    
-    # MM = cbind(MM,matrix(0,nrow(MM),ncol(boot.cov)))
-    # boot.cov = cbind(matrix(0,nrow(boot.cov),nrow(MM)),boot.cov)
-    # MM = rbind(MM,boot.cov)
-    
-    # # jacknife estimate of covariance
-    # jk.vec <- function(idx, Xordered, bbar) {
-    #   sample=Xordered[-idx,]
-    #   y=y[-idx]
-    #   xa=sample[,1:length(bbar)]
-    #   xnota=sample[,-c(1:length(bbar))]
-    # 
-    #   return(c(bbar,t(xnota)%*%(y-xa%*%bbar)))
-    # }
-    # 
-    # jk.est = matrix(0,p+1,p+1)
-    # for(i in 1:n) {
-    #   jk.est[i,]=jk.vec(i,Xordered,bbar)
-    # }
-    # jk.mean=colMeans(jk.est)
-    # jk.diff=t(jk.est-jk.mean)
-    # temp=apply(jk.diff,2,function(vec){vec=matrix(vec,ncol=1);return(vec%*%t(vec))})
-    # term=array(0,dim=c(p+1,p+1,n))
-    # for(i in 1:n) {
-    #   term[,,i]=matrix(temp[,i],p+1,p+1)
-    # }
-    # jk.cov = (n-1)*apply(term,1:2,function(x){Reduce("+",x)})/n
-    # jk.cov[1:dim(MM)[1],1:dim(MM)[2]]=MM
-    # MM=jk.cov
     
     gnotm = g[-vars]*lambda
     bbar = matrix(c(bbar,gnotm),ncol=1)
+    
+    # print(dim(A1))
+    # print(dim(b1))
+    # print(dim(bbar))
+    # print(dim(V))
   }
   
   
