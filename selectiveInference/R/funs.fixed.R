@@ -54,24 +54,16 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
     n = nrow(x)
     p = ncol(x)
     beta = as.numeric(beta)
-    if (intercept == F & length(beta) != p) stop("Since intercept=FALSE, beta must have length equal to ncol(x)")
-    if (intercept == T & length(beta) != p+1) stop("Since intercept=TRUE, beta must have length equal to ncol(x)+1")
+    # if (intercept == F & length(beta) != p) stop("Since intercept=FALSE, beta must have length equal to ncol(x)")
+    # if (intercept == T & length(beta) != p+1) stop("Since intercept=TRUE, beta must have length equal to ncol(x)+1")
     
     
-    
-    if (intercept == T) {
-      bbeta = beta[-1]
-      # m=beta[-1]!=0  #active set
-      vars = which(abs(bbeta) > tol.beta * sqrt(n / colSums(x^2)))
-      xm=cbind(1,x[,vars])
-      bhat=c(beta[1],bbeta[vars]) # intcpt plus active vars
-    } else {
-      bbeta = beta
-      # m=beta!=0  #active set
-      vars = which(abs(bbeta) > tol.beta * sqrt(n / colSums(x^2)))
-      bhat=bbeta[vars] # active vars
-      xm=x[,vars]
-    }
+    bbeta = beta
+    # m=beta!=0  #active set
+    vars = which(abs(bbeta) > tol.beta * sqrt(n / colSums(x^2)))
+    bhat=bbeta[vars] # active vars
+    xm=matrix(x[,vars],ncol=length(vars))
+
     xnotm=x[,-vars]
     
     # vars = which(abs(bbeta) > tol.beta / sqrt(colSums(x^2)))
@@ -96,7 +88,6 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
     
     #check KKT
     g = t(x)%*%(y-xm%*%bhat)/lambda # negative gradient scaled by lambda
-    # print(g[which(abs(g)>1)])
     if (any(abs(g) > 1+tol.kkt) )
       warning(paste("Solution beta does not satisfy the KKT conditions",
                     "(to within specified tolerances)"))
@@ -110,27 +101,19 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
     MM = pinv(crossprod(xm))/sigma^2
     # gradient at LASSO solution, first entry is 0 because intercept is unpenalized
     # at exact LASSO solution it should be s2[-1]
-    if (intercept == T) gm = c(0,-g[vars]*lambda)
-    else gm = -g[vars]*lambda
+    gm = -g[vars]*lambda
     
     dbeta = MM%*%gm
     
     bbar = bhat - dbeta
     
-    if (intercept == T) {
-      A1 = -(mydiag(s2))[-1,]
-      b1 = (s2*dbeta)[-1]
-      V = diag(length(bbar))[-1,]
-    } else {
-      A1 = -(mydiag(s2))
-      b1 = (s2*dbeta)
-      V = diag(length(bbar))
-    }
+    A1 = -(mydiag(s2))
+    b1 = (s2*dbeta)
+    V = diag(length(bbar))
     
     null_value = rep(0,nvar)
     
-    # if (p > n) {
-      if (type=="full") {
+    if (p > n && type=="full") {
         
         
         # Reorder so that active set is first
@@ -166,8 +149,7 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
 
         gnotm = g[-vars]*lambda
         bbar = matrix(c(bbar,gnotm),ncol=1)
-      }
-    # }
+    }
     
     # Check polyhedral region
     tol.poly = 0.01
