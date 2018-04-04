@@ -107,7 +107,7 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
                     "glmnet with a lower setting of the",
                     "'thresh' parameter, for a more accurate convergence."))
     
-    MM = pinv(crossprod(xm))*sigma^2
+    MM = pinv(crossprod(xm))/sigma^2
     # gradient at LASSO solution, first entry is 0 because intercept is unpenalized
     # at exact LASSO solution it should be s2[-1]
     if (intercept == T) gm = c(0,-g[vars]*lambda)
@@ -116,8 +116,6 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
     dbeta = MM%*%gm
     
     bbar = bhat - dbeta
-    
-    # print(length(bhat))
     
     if (intercept == T) {
       A1 = -(mydiag(s2))[-1,]
@@ -165,57 +163,6 @@ fixedLassoInf <- function(x, y, beta, lambda, family=c("gaussian","binomial","co
         MM = cbind(MM,matrix(0,nrow(MM),ncol(MMbr)))
         MMbr = cbind(matrix(0,nrow(MMbr),nrow(MM)),MMbr)
         MM = rbind(MM,MMbr)
-        
-        # # pairs bootstrap estimate of full covariance
-        # boot.vec <- function(data, indices, bbar) {
-        #   sample=data[indices,-1]
-        #   y=data[indices,1]
-        #   xa=sample[,1:length(bbar)]
-        #   xnota=sample[,-c(1:length(bbar))]
-        # 
-        #   return(c(bbar,t(xnota)%*%(y-xa%*%bbar)))
-        # }
-        # 
-        # R=100
-        # boot.obj=boot(cbind(y,Xordered),boot.vec,R,parallel="multicore",bbar=bbar)
-        # boot.est=boot.obj$t
-        # boot.mean=colMeans(boot.est)
-        # boot.diff=t(boot.est-boot.mean)
-        # temp=apply(boot.diff,2,function(vec){vec=matrix(vec,ncol=1);return(vec%*%t(vec))})
-        # term=array(0,dim=c(p+intercept,p+intercept,R))
-        # for(i in 1:R) {
-        #   term[,,i]=matrix(temp[,i],p+intercept,p+intercept)
-        # }
-        # boot.cov = apply(term,1:2,function(x){Reduce("+",x)})/(R-1)
-        # boot.cov[1:dim(MM)[1],1:dim(MM)[2]]=MM
-        # MM=boot.cov
-        
-        # # jacknife estimate of covariance
-        # jk.vec <- function(idx, Xordered, bbar) {
-        #   sample=Xordered[-idx,]
-        #   y=y[-idx]
-        #   xa=sample[,1:length(bbar)]
-        #   xnota=sample[,-c(1:length(bbar))]
-        # 
-        #   return(c(bbar,t(xnota)%*%(y-xa%*%bbar)))
-        # }
-        # 
-        # jk.est = matrix(0,p+intercept,p+intercept)
-        # for(i in 1:n) {
-        #   jk.est[i,]=jk.vec(i,Xordered,bbar)
-        # }
-        # jk.mean=colMeans(jk.est)
-        # jk.diff=t(jk.est-jk.mean)
-        # temp=apply(jk.diff,2,function(vec){vec=matrix(vec,ncol=1);return(vec%*%t(vec))})
-        # term=array(0,dim=c(p+intercept,p+intercept,n))
-        # for(i in 1:n) {
-        #   term[,,i]=matrix(temp[,i],p+intercept,p+intercept)
-        # }
-        # jk.cov = (n-1)*apply(term,1:2,function(x){Reduce("+",x)})/n
-        # jk.cov[1:dim(MM)[1],1:dim(MM)[2]]=MM
-        # MM=jk.cov
-
-
 
         gnotm = g[-vars]*lambda
         bbar = matrix(c(bbar,gnotm),ncol=1)
