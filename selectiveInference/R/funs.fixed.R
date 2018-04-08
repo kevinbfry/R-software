@@ -23,7 +23,7 @@ fixedLassoInf <- function(x, y, beta,
   type = match.arg(type)
   
   if(family=="binomial")  {
-    if(type!="partial") stop("Only type= partial allowed with binomial family")
+    # if(type!="partial") stop("Only type= partial allowed with binomial family")
     out=fixedLogitLassoInf(x,y,beta,lambda,alpha=alpha, type="partial", tol.beta=tol.beta, tol.kkt=tol.kkt,
                            gridrange=gridrange, bits=bits, verbose=verbose,this.call=this.call)
     return(out)
@@ -177,7 +177,7 @@ fixedLassoInf <- function(x, y, beta,
       hbetaS = hbeta[S]
       
       # Reorder so that active set S is first
-      Xordered = Xint[,c(S,notS,recursive=T)]
+      # Xordered = Xint[,c(S,notS,recursive=T)]
       hsigmaS = 1/n*(t(XS)%*%XS) # hsigma[S,S]
       hsigmaSinv = solve(hsigmaS) # pinv(hsigmaS)
       
@@ -188,15 +188,15 @@ fixedLassoInf <- function(x, y, beta,
 
       # Approximate inverse covariance matrix for when (n < p) from lasso_Inference.R
       if (!is_wide) {
-           hsigma = 1/n*(t(Xordered)%*%Xordered)
-           htheta = debiasingMatrix(hsigma, is_wide, n, 1:length(S), verbose=FALSE, max_try=linesearch.try, warn_kkt=TRUE)
+           hsigma = 1/n*(t(Xint)%*%Xint)
+           htheta = debiasingMatrix(hsigma, is_wide, n, S, verbose=FALSE, max_try=linesearch.try, warn_kkt=TRUE)
            ithetasigma = (GS-(htheta%*%hsigma))
       } else {
-           htheta = debiasingMatrix(Xordered, is_wide, n, 1:length(S), verbose=FALSE, max_try=linesearch.try, warn_kkt=TRUE)
-           ithetasigma = (GS-((htheta%*%t(Xordered)) %*% Xordered)/n)
+           htheta = debiasingMatrix(Xint, is_wide, n, S, verbose=FALSE, max_try=linesearch.try, warn_kkt=TRUE)
+           ithetasigma = (GS-((htheta%*%t(Xint)) %*% Xint)/n)
       }
 
-      M <- (((htheta%*%t(Xordered))+ithetasigma%*%FS%*%hsigmaSinv%*%t(XS))/n)
+      M <- (((htheta%*%t(Xint))+ithetasigma%*%FS%*%hsigmaSinv%*%t(XS))/n)
 
       # vector which is offset for testing debiased beta's
       null_value <- (((ithetasigma%*%FS%*%hsigmaSinv)%*%sign(hbetaS))*lambda/n)
