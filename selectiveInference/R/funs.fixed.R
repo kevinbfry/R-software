@@ -231,6 +231,8 @@ fixedLassoInf <- function(x, y, beta,
     pv[j] = a$pv
     if (is.na(sign_vars[j])) { # for variables not in the active set, report 2-sided pvalue
        pv[j] = 2 * min(pv[j], 1 - pv[j])
+    }  else if (sign_vars[j]<0){
+      pv[j]=1-pv[j]  
     }
     vlo[j] = a$vlo * mj # Unstandardize (mult by norm of vj)
     vup[j] = a$vup * mj # Unstandardize (mult by norm of vj)

@@ -110,13 +110,13 @@ fixedLogitLassoInf=function(x,y,beta,lambda,alpha=.1, type=c("partial"), tol.bet
        b1 = matrix(c(b1,rep(lambda,2*nrow(A0))),ncol=1)
        
        # full covariance
-       MMbr = (xnotm_w%*%xnotm - xnotm_w_xm%*%(MM/n)%*%t(xnotm_w_xm))
+       MMbr = (xnotm_w%*%xnotm - xnotm_w_xm%*%(MM/n)%*%t(xnotm_w_xm))*n
        MM = cbind(MM,matrix(0,nrow(MM),ncol(MMbr)))
        MMbr = cbind(matrix(0,nrow(MMbr),nrow(MM)),MMbr)
        MM = rbind(MM,MMbr)
        
        etahat_bbar = xm %*% (bbar/sqrt(n))
-       gnotm = (scale(t(xnotm),FALSE,1/ww)%*%(z-etahat_bbar))
+       gnotm = (scale(t(xnotm),FALSE,1/ww)%*%(z-etahat_bbar))*sqrt(n)
        bbar = matrix(c(bbar,gnotm),ncol=1)
      }
      
@@ -148,9 +148,19 @@ fixedLogitLassoInf=function(x,y,beta,lambda,alpha=.1, type=c("partial"), tol.bet
     # if(is.null(limits.info)) return(list(pv=NULL,MM=MM,eta=vj))
     a = TG.pvalue.base(limits.info, null_value=null_value[j], bits=bits)
     pv[j] = a$pv
+    if (is.na(s2[j])) { # for variables not in the active set, report 2-sided pvalue
+      pv[j] = 2 * min(pv[j], 1 - pv[j])
+    }  else if (s2[j]<0){
+      pv[j]=1-pv[j]  
+    }
     vlo[j] = a$vlo # * mj # Unstandardize (mult by norm of vj)
     vup[j] = a$vup # * mj # Unstandardize (mult by norm of vj)
     sd[j] = a$sd # * mj # Unstandardize (mult by norm of vj)
+    if (type=='full') { # rescale because of local alternatives
+      vlo[j] = vlo[j]/sqrt(n)
+      vup[j] = vup[j]/sqrt(n)
+      sd[j] = sd[j]/sqrt(n)
+    }
     
     a = TG.interval.base(limits.info, 
                          alpha=alpha,
