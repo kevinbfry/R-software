@@ -1,5 +1,5 @@
 
-fixedLogitLassoInf=function(x,y,beta,lambda,alpha=.1, type=c("partial"), tol.beta=1e-5, tol.kkt=0.1,
+fixedLogitLassoInf=function(x,y,beta,lambda,alpha=.1, type=c("partial,full"), tol.beta=1e-5, tol.kkt=0.1,
                      gridrange=c(-100,100), bits=NULL, verbose=FALSE,this.call=NULL){
     
     
